@@ -8,9 +8,7 @@
     <version>0.0.1</version>
     <packaging>jar</packaging>
     <url>https://github.com/zjcscut/chance</url>
-    <description>Chance is a lightweight project designed for Java8+ and functional programming with zero dependencies,
-        which provides declarative retry support and imperative retry support.
-    </description>
+    <description>Chance</description>
     <properties>
         <java.version>1.8</java.version>
         <maven.compiler.source>1.8</maven.compiler.source>
