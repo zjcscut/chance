@@ -314,7 +314,7 @@ public interface Chance<V> {
             }
             Choice<V, E> choiceToUse = Choice.newCompositeChoice(choiceListToUse.toArray(new Choice[0]));
             return new DefaultChance<>(waitToUse, choiceToUse, this.timeLimiter, this.blocker, this.recoverPredicate,
-                    this.attemptPredicate, this.listeners, this.timeLimitDuration, this.timeLimitUnit, this.recovery);
+                    this.attemptPredicate, this.listeners, this.timeLimitDuration, this.timeLimitUnit, this.recovery, 0);
         }
     }
 
@@ -340,6 +340,8 @@ public interface Chance<V> {
 
         private final Recovery<V> recovery;
 
+        private final int opts;
+
         private DefaultChance(Wait<V, E> wait,
                               Choice<V, E> choice,
                               TimeLimiter<V> timeLimiter,
@@ -349,7 +351,8 @@ public interface Chance<V> {
                               List<Listener<V, E>> listeners,
                               long timeLimitDuration,
                               TimeUnit timeLimitUnit,
-                              Recovery<V> recovery) {
+                              Recovery<V> recovery,
+                              int opts) {
             this.wait = wait;
             this.choice = choice;
             this.timeLimiter = timeLimiter;
@@ -362,6 +365,7 @@ public interface Chance<V> {
             this.timeLimitDuration = timeLimitDuration;
             this.timeLimitUnit = timeLimitUnit;
             this.recovery = recovery;
+            this.opts = opts;
         }
 
         public void fireListeners(Attempt<V, E> attempt) {
@@ -370,6 +374,7 @@ public interface Chance<V> {
 
         @Override
         public V call(Callable<V> callable) throws ChanceException {
+            // TODO check should get system nanos by opts
             long initialNanos = System.nanoTime();
             for (int attemptTimes = 1; ; attemptTimes++) {
                 DefaultAttempt<V, E> attempt = new DefaultAttempt<>(initialNanos, attemptTimes);
