@@ -620,24 +620,17 @@ public interface Chance<V> {
 
         private static final ChanceProxyLoader DEFAULT = new ChanceProxyLoader();
 
-        private final ConcurrentMap<Method, Chance> serviceMethodCache = new ConcurrentHashMap<>();
+        private static final ConcurrentMap<Method, Chance> SERVICE_METHOD_CACHE = new ConcurrentHashMap<>();
 
-        private <T> T createProxy(Class<? super T> type, T tatget, ProxyStrategy proxyStrategy) {
+        private <T> T createProxy(Class<? super T> type, T target, ProxyStrategy proxyStrategy) {
             boolean isInterfaceType = type.isInterface();
             if (!isInterfaceType && !ENABLE_CGLIB) {
                 throw new IllegalArgumentException("The proxy type must be an interface type while CGLIB is not enabled.");
             }
             boolean parsed = parseServiceMethod(type);
-            if (parsed) {
-                // prefer to use CGLIB
-                if ((Objects.equals(ProxyStrategy.AUTO, proxyStrategy) ||
-                        Objects.equals(ProxyStrategy.CGLIB, proxyStrategy)) && ENABLE_CGLIB) {
-                    return newCglibProxy(type, tatget);
-                }
-                if (isInterfaceType) {
-                    return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class[]{type}, (proxy, method, args)
-                            -> invokeMethodWithChance(tatget, method, args));
-                }
+            ChanceProxy chanceProxy;
+            if (parsed && Objects.nonNull(chanceProxy = ChanceProxy.newChanceProxy(type, proxyStrategy))) {
+                return chanceProxy.newProxy(type, target);
             }
             if (!parsed) {
                 throw new IllegalStateException(String.format("No chance annotations were found for type: %s.", type));
@@ -769,7 +762,7 @@ public interface Chance<V> {
                             }
                         }
                         Chance chance = builder.build();
-                        serviceMethodCache.putIfAbsent(method, chance);
+                        SERVICE_METHOD_CACHE.putIfAbsent(method, chance);
                     } catch (Exception e) {
                         if (e instanceof RuntimeException) {
                             throw (RuntimeException) e;
@@ -782,16 +775,16 @@ public interface Chance<V> {
             return parsed;
         }
 
-        private <T> Object invokeMethodWithChance(T tatget, Method method, Object[] args)
+        private static <T> Object invokeMethodWithChance(T target, Method method, Object[] args)
                 throws InvocationTargetException, IllegalAccessException, ChanceException {
             Object[] argsToUse = args != null ? args : new Object[0];
-            Chance chanceToUse = serviceMethodCache.get(method);
+            Chance chanceToUse = SERVICE_METHOD_CACHE.get(method);
             if (Objects.isNull(chanceToUse)) {
-                return method.invoke(tatget, argsToUse);
+                return method.invoke(target, argsToUse);
             }
             return chanceToUse.call(() -> {
                 try {
-                    return method.invoke(tatget, argsToUse);
+                    return method.invoke(target, argsToUse);
                 } catch (Error | RuntimeException e) {
                     throw e;
                 } catch (Throwable t) {
@@ -800,12 +793,60 @@ public interface Chance<V> {
             });
         }
 
-        private <T> T newCglibProxy(Class<? super T> type, T tatget) {
-            net.sf.cglib.proxy.Enhancer enhancer = new net.sf.cglib.proxy.Enhancer();
-            enhancer.setSuperclass(type);
-            enhancer.setCallback((MethodInterceptor) (object, method, args, methodProxy)
-                    -> invokeMethodWithChance(tatget, method, args));
-            return (T) enhancer.create();
+        /**
+         * The chance proxy.
+         */
+        @FunctionalInterface
+        interface ChanceProxy {
+
+            /**
+             * Create new proxy instance from type and target.
+             *
+             * @param type   the proxy class
+             * @param target the proxy target
+             * @return a new proxy instance
+             */
+            <T> T newProxy(Class<? super T> type, T target);
+
+            /**
+             * Create new ChanceProxy instance from type and target.
+             *
+             * @param type          the proxy class
+             * @param proxyStrategy the proxy strategy
+             * @return a new chance proxy instance
+             */
+            static <T> ChanceProxy newChanceProxy(Class<? super T> type, ProxyStrategy proxyStrategy) {
+                // prefer to use CGLIB
+                if ((Objects.equals(ProxyStrategy.AUTO, proxyStrategy) ||
+                        Objects.equals(ProxyStrategy.CGLIB, proxyStrategy)) && ENABLE_CGLIB) {
+                    return new CglibChanceProxy();
+                }
+                if (type.isInterface()) {
+                    return new JdkChanceProxy();
+                }
+                return null;
+            }
+        }
+
+        static class JdkChanceProxy implements ChanceProxy {
+
+            @Override
+            public <T> T newProxy(Class<? super T> type, T target) {
+                return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class[]{type}, (proxy, method, args)
+                        -> invokeMethodWithChance(target, method, args));
+            }
+        }
+
+        static class CglibChanceProxy implements ChanceProxy {
+
+            @Override
+            public <T> T newProxy(Class<? super T> type, T target) {
+                net.sf.cglib.proxy.Enhancer enhancer = new net.sf.cglib.proxy.Enhancer();
+                enhancer.setSuperclass(type);
+                enhancer.setCallback((MethodInterceptor) (object, method, args, methodProxy)
+                        -> invokeMethodWithChance(target, method, args));
+                return (T) enhancer.create();
+            }
         }
 
         static {
