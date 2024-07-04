@@ -29,7 +29,7 @@ public class ChanceException extends Exception {
             return "Retrying calling interrupted after " + attempt.attemptTimes() + " attempts.";
         }
         return "Retrying calling failed after " + attempt.attemptTimes() + " attempts. Exception message: "
-                + attempt.exceptionNow().getMessage() + ".";
+                + (attempt.isCancelled() ? "Attempt canceled" : attempt.exceptionNow().getMessage()) + ".";
     }
 
     @Override
