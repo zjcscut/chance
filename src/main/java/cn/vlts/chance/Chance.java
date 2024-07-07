@@ -12,6 +12,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 
+import static cn.vlts.chance.Opt.InternalOpt.*;
+
 /**
  * A chance, just likes its name, a chance to execute a call. A call will be wrapped as {@link Callable}, then executes
  * it with a specified time limiter, retries this step until it succeeds or stops by the {@link Choice}.
@@ -146,6 +148,16 @@ public interface Chance<V> {
 
         private Recovery<V> recovery;
 
+        private int opts = Opt.InternalOpt.getAllInternalOpts();
+
+        public Builder<V, E> enableOpt(Opt opt) {
+            return this;
+        }
+
+        public Builder<V, E> disableOpt(Opt opt) {
+            return this;
+        }
+
         public Builder<V, E> withListener(Listener<V, E> listener) {
             if (Objects.isNull(listener)) {
                 throw new IllegalArgumentException("Listener must not be null.");
@@ -182,6 +194,16 @@ public interface Chance<V> {
             if (Objects.isNull(choice)) {
                 throw new IllegalArgumentException("Choice must not be null.");
             }
+            if (!ENABLE_FOREVER_CHOICE.support(this.opts)) {
+                if (choice instanceof Choice.ForeverChoice) {
+                    throw new IllegalArgumentException("");
+                }
+            }
+            if (!ENABLE_RECORDING_SYSTEM_TIME.support(this.opts)) {
+                if (choice instanceof Choice.MaxCallingTimeLimitChoice) {
+                    throw new IllegalArgumentException("");
+                }
+            }
             this.choices.add(choice);
             return this;
         }
@@ -196,69 +218,58 @@ public interface Chance<V> {
 
         public Builder<V, E> withFixedWaitTime(long duration, TimeUnit unit) {
             long waitDuration = unit.toMillis(duration);
-            this.waits.add(Wait.newFixedWait(waitDuration));
-            return this;
+            return this.withWait(Wait.newFixedWait(waitDuration));
         }
 
         public Builder<V, E> withRandomWaitTime(long minDuration, long maxDuration, TimeUnit unit) {
             long minWaitDuration = unit.toMillis(minDuration);
             long maxWaitDuration = unit.toMillis(maxDuration);
-            this.waits.add(Wait.newRandomWait(minWaitDuration, maxWaitDuration));
-            return this;
+            return this.withWait(Wait.newRandomWait(minWaitDuration, maxWaitDuration));
         }
 
         public Builder<V, E> withIncrementingWaitTime(long initialDuration, long increasedDuration, TimeUnit unit) {
             long initialWaitDuration = unit.toMillis(initialDuration);
             long increasedWaitDuration = unit.toMillis(increasedDuration);
-            this.waits.add(Wait.newIncrementingWait(initialWaitDuration, increasedWaitDuration));
-            return this;
+            return this.withWait(Wait.newIncrementingWait(initialWaitDuration, increasedWaitDuration));
         }
 
         public Builder<V, E> withExponentialWaitTime(long multiplier, long maxDuration, TimeUnit unit) {
             long waitMultiplier = unit.toMillis(multiplier);
             long maxWaitDuration = unit.toMillis(maxDuration);
-            this.waits.add(Wait.newExponentialBackOffWait(waitMultiplier, maxWaitDuration));
-            return this;
+            return this.withWait(Wait.newExponentialBackOffWait(waitMultiplier, maxWaitDuration));
         }
 
         public Builder<V, E> withExponentialWaitTime(double base, long multiplier, long maxDuration, TimeUnit unit) {
             long waitMultiplier = unit.toMillis(multiplier);
             long maxWaitDuration = unit.toMillis(maxDuration);
-            this.waits.add(Wait.newExponentialBackOffWait(base, waitMultiplier, maxWaitDuration));
-            return this;
+            return this.withWait(Wait.newExponentialBackOffWait(base, waitMultiplier, maxWaitDuration));
         }
 
         public Builder<V, E> withFibonacciWaitTime(long multiplier, long maxDuration, TimeUnit unit) {
             long waitMultiplier = unit.toMillis(multiplier);
             long maxWaitDuration = unit.toMillis(maxDuration);
-            this.waits.add(Wait.newFibonacciBackoffWait(waitMultiplier, maxWaitDuration));
-            return this;
+            return this.withWait(Wait.newFibonacciBackoffWait(waitMultiplier, maxWaitDuration));
         }
 
         public Builder<V, E> withMaxRetryTimes(int maxRetryTimes) {
-            this.choices.add(Choice.newMaxTimesLimitChoice(maxRetryTimes));
-            return this;
+            return this.withChoice(Choice.newMaxTimesLimitChoice(maxRetryTimes));
         }
 
         public Builder<V, E> withRetryForever() {
-            this.choices.add(Choice.newForeverChoice());
-            return this;
+            return this.withChoice(Choice.newForeverChoice());
         }
 
         public Builder<V, E> withNeverRetry() {
-            this.choices.add(Choice.newNeverChoice());
-            return this;
+            return this.withChoice(Choice.newNeverChoice());
         }
 
         public Builder<V, E> withMaxCallingDuration(long maxDuration, TimeUnit unit) {
             long maxCallingDuration = unit.toMillis(maxDuration);
-            this.choices.add(Choice.newMaxCallingTimeLimitChoice(maxCallingDuration));
-            return this;
+            return this.withChoice(Choice.newMaxCallingTimeLimitChoice(maxCallingDuration));
         }
 
         public Builder<V, E> withRetryableExceptions(Map<Class<? extends E>, Boolean> retryableExceptions) {
-            this.choices.add(Choice.newExceptionTypeMapChoice(retryableExceptions));
-            return this;
+            return this.withChoice(Choice.newExceptionTypeMapChoice(retryableExceptions));
         }
 
         public Builder<V, E> withRetryableResult(Predicate<V> retryableResult) {
@@ -270,7 +281,7 @@ public interface Chance<V> {
 
         public Builder<V, E> withRetryableResults(List<Predicate<V>> retryableResults) {
             if (Objects.nonNull(retryableResults)) {
-                this.choices.add(Choice.newResultPredicateListChoice(retryableResults));
+                this.withChoice(Choice.newResultPredicateListChoice(retryableResults));
                 retryableResults.stream().map(Predicate::negate).forEach(resultPredicate -> this.attemptPredicate =
                         this.attemptPredicate.and(attempt -> resultPredicate.test(attempt.resultNow())));
             }
@@ -314,7 +325,7 @@ public interface Chance<V> {
             }
             Choice<V, E> choiceToUse = Choice.newCompositeChoice(choiceListToUse.toArray(new Choice[0]));
             return new DefaultChance<>(waitToUse, choiceToUse, this.timeLimiter, this.blocker, this.recoverPredicate,
-                    this.attemptPredicate, this.listeners, this.timeLimitDuration, this.timeLimitUnit, this.recovery, 0);
+                    this.attemptPredicate, this.listeners, this.timeLimitDuration, this.timeLimitUnit, this.recovery, this.opts);
         }
     }
 
@@ -374,11 +385,13 @@ public interface Chance<V> {
 
         @Override
         public V call(Callable<V> callable) throws ChanceException {
-            // TODO check should get system nanos by opts
-            long initialNanos = System.nanoTime();
+            boolean enableRecordSystemTime = ENABLE_RECORDING_SYSTEM_TIME.support(this.opts);
+            long initialNanos = enableRecordSystemTime ? System.nanoTime() : 0;
             for (int attemptTimes = 1; ; attemptTimes++) {
-                DefaultAttempt<V, E> attempt = new DefaultAttempt<>(initialNanos, attemptTimes);
-                fireListeners(attempt);
+                DefaultAttempt<V, E> attempt = new DefaultAttempt<>(initialNanos, attemptTimes, this.opts);
+                if (ENABLE_LISTENERS.support(this.opts)) {
+                    fireListeners(attempt);
+                }
                 cancelCallIfNecessary(attempt);
                 try {
                     V value = this.timeLimiter.callWithTimeout(callable, this.timeLimitDuration, this.timeLimitUnit);
@@ -386,8 +399,10 @@ public interface Chance<V> {
                 } catch (Throwable e) {
                     attempt.setException(e);
                 } finally {
-                    attempt.setCompletionNanos(System.nanoTime());
-                    fireListeners(attempt);
+                    attempt.setCompletionNanos(enableRecordSystemTime ? System.nanoTime() : 0);
+                    if (ENABLE_LISTENERS.support(this.opts)) {
+                        fireListeners(attempt);
+                    }
                 }
                 if (this.attemptPredicate.test(attempt)) {
                     return attempt.resultNow();
@@ -409,7 +424,7 @@ public interface Chance<V> {
         }
 
         private void cancelCallIfNecessary(Attempt<?, ?> attempt) throws ChanceException {
-            if (attempt.isCancelled()) {
+            if (ENABLE_CANCELLING_CHANCE.support(this.opts) && attempt.isCancelled()) {
                 throw new ChanceException(attempt, false);
             }
         }
@@ -422,16 +437,19 @@ public interface Chance<V> {
 
             private final int attemptTimes;
 
+            private final int opts;
+
             private final AtomicReference<State> stateRef = new AtomicReference<>(State.RUNNING);
 
             private long completionNanos;
 
             private Object resultHolder;
 
-            private DefaultAttempt(long initialNanos, int attemptTimes) {
+            private DefaultAttempt(long initialNanos, int attemptTimes, int opts) {
                 this.initialNanos = initialNanos;
-                this.startNanos = System.nanoTime();
+                this.startNanos = ENABLE_RECORDING_SYSTEM_TIME.support(opts) ? System.nanoTime() : 0;
                 this.attemptTimes = attemptTimes;
+                this.opts = opts;
             }
 
             @Override
@@ -440,13 +458,23 @@ public interface Chance<V> {
             }
 
             @Override
+            public int opts() {
+                return this.opts;
+            }
+
+            @Override
             public boolean cancel() {
-                return this.stateRef.compareAndSet(State.RUNNING, State.CANCELLED);
+                if (ENABLE_CANCELLING_CHANCE.support(this.opts)) {
+                    return this.stateRef.compareAndSet(State.RUNNING, State.CANCELLED);
+                }
+                return false;
             }
 
             @Override
             public void forceCancel() {
-                this.stateRef.set(State.CANCELLED);
+                if (ENABLE_CANCELLING_CHANCE.support(this.opts)) {
+                    this.stateRef.set(State.CANCELLED);
+                }
             }
 
             @SuppressWarnings("unchecked")
@@ -526,17 +554,20 @@ public interface Chance<V> {
 
             private final int attemptTimes;
 
+            private final int opts;
+
             private final State state;
 
             private final long completionNanos;
 
             private final Object resultHolder;
 
-            private ReadOnlyAttempt(long initialNanos, long startNanos, int attemptTimes, State state,
+            private ReadOnlyAttempt(long initialNanos, long startNanos, int attemptTimes, int opts, State state,
                                     long completionNanos, Object resultHolder) {
                 this.initialNanos = initialNanos;
                 this.startNanos = startNanos;
                 this.attemptTimes = attemptTimes;
+                this.opts = opts;
                 this.state = state;
                 this.completionNanos = completionNanos;
                 this.resultHolder = resultHolder;
@@ -582,6 +613,11 @@ public interface Chance<V> {
             }
 
             @Override
+            public int opts() {
+                return this.opts;
+            }
+
+            @Override
             public int attemptTimes() {
                 return this.attemptTimes;
             }
@@ -606,6 +642,7 @@ public interface Chance<V> {
                         defaultAttempt.initialNanos,
                         defaultAttempt.startNanos,
                         defaultAttempt.attemptTimes,
+                        defaultAttempt.opts,
                         defaultAttempt.state(),
                         defaultAttempt.completionNanos,
                         defaultAttempt.resultHolder);

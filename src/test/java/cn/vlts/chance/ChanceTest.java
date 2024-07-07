@@ -874,9 +874,16 @@ public class ChanceTest {
 
         private long completionNanos;
 
+        private int opts;
+
         @Override
         public State state() {
             return state;
+        }
+
+        @Override
+        public int opts() {
+            return opts;
         }
 
         @Override

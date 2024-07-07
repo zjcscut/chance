@@ -19,6 +19,13 @@ public interface Attempt<V, E extends Throwable> {
     State state();
 
     /**
+     * Return the options value.
+     *
+     * @return the options value.
+     */
+    int opts();
+
+    /**
      * Cancel current attempt.
      *
      * @return true if current attempt has been canceled, otherwise false
