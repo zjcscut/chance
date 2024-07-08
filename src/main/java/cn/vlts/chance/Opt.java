@@ -12,7 +12,7 @@ public interface Opt {
     /**
      * Check whether current option is supported.
      *
-     * @param opts the option bit array.
+     * @param opts the options value.
      * @return supported or not
      */
     default boolean support(int opts) {
@@ -25,30 +25,40 @@ public interface Opt {
     int value();
 
     /**
-     * Chance internal options. Internal option value is between [1 << 0, 1 << 15], custom option value must be
+     * Chance internal options. Internal option value is between [1 << 0, 1 << 15], while custom option value must be
      * between [1 << 16, 1 << 31].
      */
     enum InternalOpt implements Opt {
 
         /**
-         * Enable recording current system time.
+         * Recording current system time.
          */
-        ENABLE_RECORDING_SYSTEM_TIME(1),
+        RECORDING_SYSTEM_TIME(1),
 
         /**
-         * Enable ForeverChoice.
+         * ForeverChoice.
          */
-        ENABLE_FOREVER_CHOICE(1 << 1),
+        FOREVER_CHOICE(1 << 1),
 
         /**
-         * Enable listeners.
+         * Listeners.
          */
-        ENABLE_LISTENERS(1 << 2),
+        LISTENERS(1 << 2),
 
         /**
-         * Enable cancelling chance.
+         * Cancelling chance.
          */
-        ENABLE_CANCELLING_CHANCE(1 << 3),
+        CANCELLING_CHANCE(1 << 3),
+
+        /**
+         * Exception type equality comparison.
+         */
+        EXCEPTION_TYPE_EQUALITY_COMPARISON(1 << 4),
+
+        /**
+         * Recovery.
+         */
+        RECOVERY(1 << 5),
 
         ;
 
@@ -66,7 +76,7 @@ public interface Opt {
         public static int getAllInternalOpts() {
             int opts = 0;
             for (InternalOpt opt : values()) {
-                opts += opt.value();
+                opts |= opt.value();
             }
             return opts;
         }

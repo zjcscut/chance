@@ -6,6 +6,8 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 
+import static cn.vlts.chance.Opt.InternalOpt.EXCEPTION_TYPE_EQUALITY_COMPARISON;
+
 /**
  * A choice determines whether next attempt should be executed.
  *
@@ -158,10 +160,12 @@ public interface Choice<V, E extends Throwable> {
             if (!attempt.hasException()) {
                 return true;
             }
+            boolean useEqualityComparison = EXCEPTION_TYPE_EQUALITY_COMPARISON.support(attempt.opts());
             E cause = attempt.rootCauseNow();
             Class<?> exceptionType = cause.getClass();
             for (Map.Entry<Class<? extends E>, Boolean> entry : this.exceptionTypeMap.entrySet()) {
-                if (Objects.equals(entry.getKey(), exceptionType)) {
+                if (useEqualityComparison ? Objects.equals(entry.getKey(), exceptionType) :
+                        entry.getKey().isAssignableFrom(exceptionType)) {
                     return entry.getValue();
                 }
             }

@@ -128,6 +128,10 @@ public interface Chance<V> {
      */
     class Builder<V, E extends Throwable> {
 
+        private static final String CHANCE_OPTS_KEY = "CHANCE_OPTS";
+
+        private int opts = Opt.InternalOpt.getAllInternalOpts();
+
         private long timeLimitDuration = 0L;
 
         private TimeUnit timeLimitUnit = TimeUnit.MILLISECONDS;
@@ -148,19 +152,40 @@ public interface Chance<V> {
 
         private Recovery<V> recovery;
 
-        private int opts = Opt.InternalOpt.getAllInternalOpts();
-
         public Builder<V, E> enableOpt(Opt opt) {
+            this.opts |= opt.value();
+            return this;
+        }
+
+        public Builder<V, E> enableOpts(Opt... opts) {
+            if (Objects.nonNull(opts)) {
+                for (Opt opt : opts) {
+                    enableOpt(opt);
+                }
+            }
             return this;
         }
 
         public Builder<V, E> disableOpt(Opt opt) {
+            this.opts &= ~opt.value();
+            return this;
+        }
+
+        public Builder<V, E> disableOpts(Opt... opts) {
+            if (Objects.nonNull(opts)) {
+                for (Opt opt : opts) {
+                    disableOpt(opt);
+                }
+            }
             return this;
         }
 
         public Builder<V, E> withListener(Listener<V, E> listener) {
             if (Objects.isNull(listener)) {
                 throw new IllegalArgumentException("Listener must not be null.");
+            }
+            if (!LISTENERS.support(this.opts)) {
+                throw new IllegalArgumentException("Listener is disabled.");
             }
             this.listeners.add(listener);
             return this;
@@ -194,15 +219,11 @@ public interface Chance<V> {
             if (Objects.isNull(choice)) {
                 throw new IllegalArgumentException("Choice must not be null.");
             }
-            if (!ENABLE_FOREVER_CHOICE.support(this.opts)) {
-                if (choice instanceof Choice.ForeverChoice) {
-                    throw new IllegalArgumentException("");
-                }
+            if (!FOREVER_CHOICE.support(this.opts) && choice instanceof Choice.ForeverChoice) {
+                throw new IllegalArgumentException("ForeverChoice is disabled.");
             }
-            if (!ENABLE_RECORDING_SYSTEM_TIME.support(this.opts)) {
-                if (choice instanceof Choice.MaxCallingTimeLimitChoice) {
-                    throw new IllegalArgumentException("");
-                }
+            if (!RECORDING_SYSTEM_TIME.support(this.opts) && choice instanceof Choice.MaxCallingTimeLimitChoice) {
+                throw new IllegalArgumentException("MaxCallingTimeLimitChoice is disabled.");
             }
             this.choices.add(choice);
             return this;
@@ -310,6 +331,8 @@ public interface Chance<V> {
 
         @SuppressWarnings("unchecked")
         public Chance<V> build() {
+            String optsProperty = System.getProperty(CHANCE_OPTS_KEY);
+            int optsToUse = Optional.ofNullable(optsProperty).map(Integer::parseInt).orElse(this.opts);
             Wait<V, E> waitToUse;
             if (this.waits.isEmpty()) {
                 waitToUse = Wait.newNoWait();
@@ -325,7 +348,7 @@ public interface Chance<V> {
             }
             Choice<V, E> choiceToUse = Choice.newCompositeChoice(choiceListToUse.toArray(new Choice[0]));
             return new DefaultChance<>(waitToUse, choiceToUse, this.timeLimiter, this.blocker, this.recoverPredicate,
-                    this.attemptPredicate, this.listeners, this.timeLimitDuration, this.timeLimitUnit, this.recovery, this.opts);
+                    this.attemptPredicate, this.listeners, this.timeLimitDuration, this.timeLimitUnit, this.recovery, optsToUse);
         }
     }
 
@@ -385,14 +408,14 @@ public interface Chance<V> {
 
         @Override
         public V call(Callable<V> callable) throws ChanceException {
-            boolean enableRecordSystemTime = ENABLE_RECORDING_SYSTEM_TIME.support(this.opts);
+            boolean enableRecordSystemTime = RECORDING_SYSTEM_TIME.support(this.opts);
             long initialNanos = enableRecordSystemTime ? System.nanoTime() : 0;
             for (int attemptTimes = 1; ; attemptTimes++) {
                 DefaultAttempt<V, E> attempt = new DefaultAttempt<>(initialNanos, attemptTimes, this.opts);
-                if (ENABLE_LISTENERS.support(this.opts)) {
+                if (LISTENERS.support(this.opts)) {
                     fireListeners(attempt);
                 }
-                cancelCallIfNecessary(attempt);
+                cancelCallingIfNecessary(attempt);
                 try {
                     V value = this.timeLimiter.callWithTimeout(callable, this.timeLimitDuration, this.timeLimitUnit);
                     attempt.setResult(value);
@@ -400,7 +423,7 @@ public interface Chance<V> {
                     attempt.setException(e);
                 } finally {
                     attempt.setCompletionNanos(enableRecordSystemTime ? System.nanoTime() : 0);
-                    if (ENABLE_LISTENERS.support(this.opts)) {
+                    if (LISTENERS.support(this.opts)) {
                         fireListeners(attempt);
                     }
                 }
@@ -409,6 +432,7 @@ public interface Chance<V> {
                 }
                 if (!this.choice.shouldRetryNext(attempt)) {
                     return Optional.ofNullable(this.recovery)
+                            .filter(recoveryToUse -> RECOVERY.support(attempt.opts()))
                             .filter(recoveryToUse -> this.recoverPredicate.test(recoveryToUse, attempt))
                             .map(recoveryToUse -> recoveryToUse.recover(attempt))
                             .orElseThrow(() -> new ChanceException(attempt.toReadOnlyAttempt(), false));
@@ -423,8 +447,8 @@ public interface Chance<V> {
             }
         }
 
-        private void cancelCallIfNecessary(Attempt<?, ?> attempt) throws ChanceException {
-            if (ENABLE_CANCELLING_CHANCE.support(this.opts) && attempt.isCancelled()) {
+        private void cancelCallingIfNecessary(Attempt<?, ?> attempt) throws ChanceException {
+            if (CANCELLING_CHANCE.support(this.opts) && attempt.isCancelled()) {
                 throw new ChanceException(attempt, false);
             }
         }
@@ -447,7 +471,7 @@ public interface Chance<V> {
 
             private DefaultAttempt(long initialNanos, int attemptTimes, int opts) {
                 this.initialNanos = initialNanos;
-                this.startNanos = ENABLE_RECORDING_SYSTEM_TIME.support(opts) ? System.nanoTime() : 0;
+                this.startNanos = RECORDING_SYSTEM_TIME.support(opts) ? System.nanoTime() : 0;
                 this.attemptTimes = attemptTimes;
                 this.opts = opts;
             }
@@ -464,7 +488,7 @@ public interface Chance<V> {
 
             @Override
             public boolean cancel() {
-                if (ENABLE_CANCELLING_CHANCE.support(this.opts)) {
+                if (CANCELLING_CHANCE.support(this.opts)) {
                     return this.stateRef.compareAndSet(State.RUNNING, State.CANCELLED);
                 }
                 return false;
@@ -472,7 +496,7 @@ public interface Chance<V> {
 
             @Override
             public void forceCancel() {
-                if (ENABLE_CANCELLING_CHANCE.support(this.opts)) {
+                if (CANCELLING_CHANCE.support(this.opts)) {
                     this.stateRef.set(State.CANCELLED);
                 }
             }

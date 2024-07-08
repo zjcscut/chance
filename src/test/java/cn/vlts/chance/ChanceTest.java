@@ -19,6 +19,53 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 public class ChanceTest {
 
     @Test
+    public void testChanceOptions() {
+        // default
+        Chance<String> chance = Chance.<String, Throwable>newBuilder()
+                .withNeverRetry()
+                .build();
+        assertThat(chance).extracting("opts").isEqualTo(Opt.InternalOpt.getAllInternalOpts());
+        // enable all internal opts
+        chance = Chance.<String, Throwable>newBuilder()
+                .withNeverRetry()
+                .enableOpt(Opt.InternalOpt.RECORDING_SYSTEM_TIME)
+                .enableOpt(Opt.InternalOpt.FOREVER_CHOICE)
+                .enableOpt(Opt.InternalOpt.LISTENERS)
+                .enableOpt(Opt.InternalOpt.CANCELLING_CHANCE)
+                .enableOpt(Opt.InternalOpt.EXCEPTION_TYPE_EQUALITY_COMPARISON)
+                .enableOpt(Opt.InternalOpt.RECOVERY)
+                .build();
+        assertThat(chance).extracting("opts").isEqualTo(Opt.InternalOpt.getAllInternalOpts());
+        chance = Chance.<String, Throwable>newBuilder()
+                .withNeverRetry()
+                .enableOpts(Opt.InternalOpt.values())
+                .build();
+        assertThat(chance).extracting("opts").isEqualTo(Opt.InternalOpt.getAllInternalOpts());
+        // disable all internal opts
+        chance = Chance.<String, Throwable>newBuilder()
+                .withNeverRetry()
+                .disableOpt(Opt.InternalOpt.RECORDING_SYSTEM_TIME)
+                .disableOpt(Opt.InternalOpt.FOREVER_CHOICE)
+                .disableOpt(Opt.InternalOpt.LISTENERS)
+                .disableOpt(Opt.InternalOpt.CANCELLING_CHANCE)
+                .disableOpt(Opt.InternalOpt.EXCEPTION_TYPE_EQUALITY_COMPARISON)
+                .disableOpt(Opt.InternalOpt.RECOVERY)
+                .build();
+        assertThat(chance).extracting("opts").isEqualTo(0);
+        chance = Chance.<String, Throwable>newBuilder()
+                .withNeverRetry()
+                .disableOpts(Opt.InternalOpt.values())
+                .build();
+        assertThat(chance).extracting("opts").isEqualTo(0);
+        // custom
+        chance = Chance.<String, Throwable>newBuilder()
+                .withNeverRetry()
+                .enableOpt(() -> 1 << 16)
+                .build();
+        assertThat(chance).extracting("opts").isEqualTo(Opt.InternalOpt.getAllInternalOpts() | 1 << 16);
+    }
+
+    @Test
     public void testBuildSimpleChance() {
         Chance<String> chance = Chance.<String, Throwable>newBuilder()
                 .withNeverRetry()
@@ -110,6 +157,15 @@ public class ChanceTest {
                     .withListener(null);
         } catch (Throwable e) {
             assertThat(e).isInstanceOf(IllegalArgumentException.class).hasMessage("Listener must not be null.");
+        }
+        try {
+            Chance.<String, Throwable>newBuilder()
+                    .withNeverRetry()
+                    .disableOpt(Opt.InternalOpt.LISTENERS)
+                    .withListener(attempt -> {
+                    });
+        } catch (Throwable e) {
+            assertThat(e).isInstanceOf(IllegalArgumentException.class).hasMessage("Listener is disabled.");
         }
         try {
             Chance.<String, Throwable>newBuilder()
@@ -378,6 +434,20 @@ public class ChanceTest {
         } catch (Throwable e) {
             assertThat(e).isInstanceOf(IllegalArgumentException.class).hasMessage("Choice must not be null.");
         }
+        try {
+            Chance.<String, Throwable>newBuilder()
+                    .disableOpt(Opt.InternalOpt.FOREVER_CHOICE)
+                    .withRetryForever();
+        } catch (Throwable e) {
+            assertThat(e).isInstanceOf(IllegalArgumentException.class).hasMessage("ForeverChoice is disabled.");
+        }
+        try {
+            Chance.<String, Throwable>newBuilder()
+                    .disableOpt(Opt.InternalOpt.RECORDING_SYSTEM_TIME)
+                    .withMaxCallingDuration(1000, TimeUnit.MILLISECONDS);
+        } catch (Throwable e) {
+            assertThat(e).isInstanceOf(IllegalArgumentException.class).hasMessage("MaxCallingTimeLimitChoice is disabled.");
+        }
         Choice<String, Throwable> foreverChoice = Choice.newForeverChoice();
         Choice<String, Throwable> neverChoice = Choice.newNeverChoice();
         Choice<String, Throwable> cancelJudgeChoice = Choice.newCancelJudgeChoice();
@@ -422,6 +492,13 @@ public class ChanceTest {
 
     @Test
     public void testChanceCompositeWait() {
+        try {
+            Chance.<String, Throwable>newBuilder()
+                    .withNeverRetry()
+                    .withWait(null);
+        } catch (Throwable e) {
+            assertThat(e).isInstanceOf(IllegalArgumentException.class).hasMessage("Wait must not be null.");
+        }
         Wait<String, Throwable> noWait = Wait.newNoWait();
         Wait<String, Throwable> fixedWait = Wait.newFixedWait(1);
         Wait<String, Throwable> randomWait = Wait.newRandomWait(1, 1);
@@ -533,6 +610,7 @@ public class ChanceTest {
     @Test
     public void testChoices() {
         CustomAttempt<String> attempt = new CustomAttempt<>();
+        attempt.setOpts(Opt.InternalOpt.getAllInternalOpts());
         // foreverChoice
         assertThat(Choice.<String, Throwable>newForeverChoice().shouldRetryNext(attempt)).isEqualTo(true);
         // neverChoice
@@ -710,6 +788,11 @@ public class ChanceTest {
 
     @Test
     public void testChanceJdkProxy() {
+        try {
+            Chance.newProxy(NoneApi.class, new NoneApiImpl(), Chance.ProxyStrategy.JDK);
+        } catch (Throwable e) {
+            assertThat(e).isInstanceOf(IllegalStateException.class).hasMessageContaining("No chance annotations were found for type");
+        }
         SomeApi someApi = Chance.newProxy(SomeApi.class, new SomeApiImpl(), Chance.ProxyStrategy.JDK);
         assertThat(someApi.useTypeAnnotation()).isEqualTo("useTypeAnnotation");
         assertThat(someApi.useMethodAnnotation()).isEqualTo("useMethodAnnotation");
@@ -759,6 +842,14 @@ public class ChanceTest {
         public String recover(Attempt<String, ?> attempt) {
             return "Recovery";
         }
+    }
+
+    interface NoneApi {
+
+    }
+
+    static class NoneApiImpl implements NoneApi {
+
     }
 
     @ChanceFor(maxRetryTimes = 0,
@@ -931,6 +1022,10 @@ public class ChanceTest {
         @Override
         public long completionNanos() {
             return completionNanos;
+        }
+
+        public void setOpts(int opts) {
+            this.opts = opts;
         }
 
         public void setState(State state) {
